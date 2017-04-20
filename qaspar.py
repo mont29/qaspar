@@ -36,6 +36,10 @@ Example
 
    ./qaspar.py -u http://radioevasion.fr:8020/
 
+If you want to apply a normalization filter (to the audio output only, not the mp3 files):
+
+   ./qaspar.py -u http://radioevasion.fr:8020/ --play-normalize --play-normalize-options="I=-16:TP=-1.5:LRA=11"
+
 You can use e.g. daemon tool [1] to daemonize it and automatically re-run it in case it terminates or crashes:
 
    daemon -n qaspar -r -A 1 -L 10 -M 100 -O "daemon.info" -- \
@@ -178,6 +182,14 @@ def argparse_create():
         "--play-sink", dest="pl_sink", default="pulse", metavar='FFMPEG_SINK',
         help=("Which device/audio system to use to play audio "
               "(default pulse one should be OK for any modern linux, must be valid ffmpeg 'format' audio output)"))
+    parser.add_argument(
+        "--play-normalize", dest="pl_do_normalize", default=False, action='store_true',
+        help=("Normalize audio output "
+              "(using loudnorm FFMPEG filer, an implementation of the EBU R128 loudness standard)"))
+    parser.add_argument(
+        "--play-normalize-options", dest="pl_norm_options", default="", 
+        help=("Options passed to loudnorm, using FFMEPG syntax (OPT1=value:OPT2=value:...), "
+              "see http://ffmpeg.org/ffmpeg-all.html#loudnorm for more"))
 
     parser.add_argument(
         "--no-store", dest="do_store", default=True, action='store_false', required=False,
@@ -224,18 +236,20 @@ def main():
         os.makedirs(args.st_path)
 
     # Single process:
-    # ffmpeg -i http://radioevasion.fr:8020/ -f pulse ffmpeg_audio_player_stream -c:a copy \
-    # -f tee -map 0:a "[onfail=ignore:f=segment:segment_time=3600:segment_atclocktime=1:strftime=1]\
+    # ffmpeg -i http://radioevasion.fr:8020/ [-af loudnorm=I=-16:TP=-1.5:LRA=11] -f pulse ffmpeg_audio_player_stream \
+    # -c:a copy -f tee -map 0:a "[onfail=ignore:f=segment:segment_time=3600:segment_atclocktime=1:strftime=1]\
     # archive-%Y_%m_%d-%H_%M_%S.mp3"
 
     # Two separate processes (chosen solution for now):
-    # ffmpeg -i http://radioevasion.fr:8020/ -f pulse ffmpeg_audio_player_stream
+    # ffmpeg -i http://radioevasion.fr:8020/ [-af loudnorm=I=-16:TP=-1.5:LRA=11] -f pulse ffmpeg_audio_player_stream
     #
     # ffmpeg -i http://radioevasion.fr:8020/ -f segment -segment_time 3600 -segment_atclocktime 1 -strftime 1 \
     # archive-%Y_%m_%d-%H_%M_%S.mp3"
 
     proc_params = {"stdin":None, "stdout":subprocess.PIPE, "stderr":subprocess.PIPE, "universal_newlines":True}
-    pl_command = (args.executable, "-i", args.url, "-f", args.pl_sink, "qaspar_ffmpeg_player")
+    loudnorm = ("-af", "=".join(("loudnorm", args.pl_norm_options)) if args.pl_norm_options else "loudnorm") \
+               if args.pl_do_normalize else ()
+    pl_command = (args.executable, "-i", args.url) + loudnorm + ("-f", args.pl_sink, "qaspar_ffmpeg_player")
     st_command = (args.executable, "-i", args.url, "-c:a", "copy", "-f", "segment",
                   "-segment_time", str(int(args.st_split_time)), "-segment_atclocktime", "1", "-strftime", "1",
                   os.path.join(args.st_path, args.st_filename))
